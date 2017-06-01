@@ -28,6 +28,7 @@ func showUsage() {
 	fmt.Println(" numPackets:     how many packets to send")
 	fmt.Println(" packetSize:     size of a packet")
 	fmt.Println(" sendDelay:      time to wait between two packets (milliseconds)")
+	fmt.Println(" f:              how hard to fuzz (on a scale from 1 to 100)")
 	fmt.Println("")
 	fmt.Println(".[MODES].")
 	fmt.Println("")
@@ -56,6 +57,10 @@ func showUsage() {
 	fmt.Println("drop-rate")
 	fmt.Println(" Measure ratio of sent packets to received packets. ")
 	fmt.Println(" Also measures difference of sent PSN and received PSE.")
+	fmt.Println("")
+	fmt.Println("fuzz")
+	fmt.Println(" Like client mode but randomly manipulate packets to see")
+	fmt.Println(" how the receiver deals with it.")
 }
 
 func main() {
