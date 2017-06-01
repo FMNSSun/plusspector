@@ -7,6 +7,7 @@ import "plus/packet"
 import "fmt"
 import "strconv"
 import "time"
+import "math/rand"
 
 func showUsage() {
 	fmt.Println(".[SYNTAX].")
@@ -18,6 +19,7 @@ func showUsage() {
 	fmt.Println("pluspector forward    localAddr remoteAddr localRelayAddr")
 	fmt.Println("pluspector client     localAddr remoteAddr")
 	fmt.Println("pluspector drop-rate  localAddr remoteAddr numPackets packetSize sendDelay")
+	fmt.Println("pluspector fuzz       localAddr remoteAddr f")
 	fmt.Println("")
 	fmt.Println(" localAddr:      local address connection will listen on")
 	fmt.Println(" remoteAddr:     destination address to connect to")
@@ -114,6 +116,23 @@ func main() {
 		client(laddr, raddr)
 		return
 
+	case "fuzz":
+		if len(args) < 5 {
+			showUsage()
+			return
+		}
+
+		laddr = args[2]
+		raddr = args[3]
+		f, err := strconv.ParseInt(args[4], 10, 16)
+
+		if err != nil {
+			panic("Not a number!")
+		}
+
+		fuzz(laddr, raddr, int(f))
+		return
+
 	case "drop-rate":
 		if len(args) < 7 {
 			showUsage()
@@ -180,6 +199,89 @@ func genData(size int64) []byte {
 	}
 
 	return data
+}
+
+func mutilate(plusPacket *packet.PLUSPacket, f int) []byte {
+	buffer := plusPacket.Buffer()
+
+	for i := 0; i < f; i++ {
+		idx := rand.Int() % len(buffer)
+
+		mask := byte(rand.Int() % 256)
+
+		buffer[idx] ^= mask
+	}
+
+	return buffer
+}
+
+func fuzz(laddr string, remoteAddr string, f int) {
+	packetConn, err := net.ListenPacket("udp", laddr)
+
+	if err != nil {
+		panic("Could not create packet connection!")
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp4", remoteAddr)
+
+	if err != nil {
+		panic("Could not resolve address!")
+	}
+
+	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, 1989, udpAddr)
+
+
+
+	go func() {
+		for {
+			timeout := make(chan bool)
+			got := make(chan bool)
+
+			go func() {
+				time.Sleep(1000 * time.Millisecond)
+				timeout <- true
+			}()
+
+			go func() {
+				_, _, _, _, err := connectionManager.ReadAndProcessPacket()
+				if err != nil {
+					fmt.Println(err.Error())
+					// ignore errors here
+				}
+				got <- true
+			}()
+
+			select {
+				case <- timeout:
+					panic("Receiver crashed \\o/")
+				case <- got:
+					// meh
+			}
+		}
+	}()
+
+
+
+	for i := int64(0); i < int64(4294967296); i++ {
+		buffer := genData(int64(rand.Int() % 4096))
+
+		if i % 4 == 0 {
+			connection.QueuePCFRequest(0x01, 0, []byte{0x00})
+		}
+
+		plusPacket, err := connection.PrepareNextPacket()
+		plusPacket.SetPayload(buffer)
+
+		if err != nil {
+			panic("oops!")
+		}
+
+		_, err = packetConn.WriteTo(mutilate(plusPacket, f), udpAddr)
+
+		if err != nil {
+			panic("oops!")
+		}
+	}
 }
 
 func dropRate(laddr string, remoteAddr string, numPackets int64, packetSize int64, sendDelay int64) {
@@ -315,6 +417,10 @@ func client(laddr string, remoteAddr string) {
 }
 
 func plusPacketToString(plusPacket *packet.PLUSPacket, from net.Addr, to net.Addr, mode string) string {
+	if plusPacket == nil {
+		return "{\"error\":\"n/a\"}"
+	}
+
 	if !plusPacket.XFlag() {
 		strFmt := "{\"mode\":\"%s\",\"from\":\"%s\",\"to\":\"%s\",\"flags\":{\"l\":%t,\"r\":%t,\"s\":%t,\"x\":%t},\"psn\":%d,\"pse\":%d,\"cat\":%d,\"payload\":%d}"
 		strOut := fmt.Sprintf(strFmt, mode, from.String(), to.String(), plusPacket.LFlag(),
@@ -405,7 +511,9 @@ func run(packetConn net.PacketConn, remoteAddr *net.UDPAddr, lfaddr string, mode
 				connection, err := connManager.GetConnection(plusPacket.CAT())
 
 				if err != nil {
-					panic("oops!")
+					fmt.Printf("-- ERROR: %s\n", err.Error())
+					// ignore this
+					continue
 				}
 
 				fmt.Println(plusPacketToString(plusPacket, forwardConn.LocalAddr(), connection.RemoteAddr(), "forward:back"))
@@ -421,7 +529,9 @@ func run(packetConn net.PacketConn, remoteAddr *net.UDPAddr, lfaddr string, mode
 		connection, plusPacket, addr, feedback, err := connManager.ReadAndProcessPacket()
 
 		if err != nil {
-			panic("oops!")
+			fmt.Printf("-- ERROR: %s\n", err.Error())
+			// ignore this
+			continue
 		}
 
 		fmt.Println(plusPacketToString(plusPacket, addr, packetConn.LocalAddr(), "in"))
