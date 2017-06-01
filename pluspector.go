@@ -5,40 +5,55 @@ import "net"
 import "plus"
 import "plus/packet"
 import "fmt"
+import "strconv"
+import "time"
 
 func showUsage() {
 	fmt.Println(".[SYNTAX].")
 	fmt.Println("")
 	fmt.Println("plusspector <mode> <arg1> <arg2> ...")
 	fmt.Println("")
-	fmt.Println("pluspector drop    localAddr")
-	fmt.Println("pluspector echo    localAddr")
-	fmt.Println("pluspector forward localAddr remoteAddr localRelayAddr")
-	fmt.Println("pluspector client  localAddr remoteAddr")
+	fmt.Println("pluspector drop       localAddr")
+	fmt.Println("pluspector echo       localAddr")
+	fmt.Println("pluspector forward    localAddr remoteAddr localRelayAddr")
+	fmt.Println("pluspector client     localAddr remoteAddr")
+	fmt.Println("pluspector drop-rate  localAddr remoteAddr numPackets packetSize sendDelay")
 	fmt.Println("")
 	fmt.Println(" localAddr:      local address connection will listen on")
 	fmt.Println(" remoteAddr:     destination address to connect to")
 	fmt.Println(" localRelayAddr: when in forward mode packets will be forwarded")
 	fmt.Println("                 from this local address")
+	fmt.Println(" numPackets:     how many packets to send")
+	fmt.Println(" packetSize:     size of a packet")
+	fmt.Println(" sendDelay:      time to wait between two packets (milliseconds)")
 	fmt.Println("")
 	fmt.Println(".[MODES].")
 	fmt.Println("")
-	fmt.Println("drop    - listen for packets and drop them.")
+	fmt.Println("drop")
+    fmt.Println(" Listen for packets and drop them.")
 	fmt.Println("")
-	fmt.Println("echo    - listen for packets and echo them back.")
-	fmt.Println("          The first byte of an echo packet indicates whether")
-	fmt.Println("          the echo packet contains the echoed payload or")
-	fmt.Println("          whether it contains feedback.")
-	fmt.Println("            - 0x00 = regular data.")
-	fmt.Println("            - 0xFF = feedback data.")
+	fmt.Println("echo")
+    fmt.Println(" Listen for packets and echo them back.")
+	fmt.Println(" The first byte of an echo packet indicates whether")
+	fmt.Println(" the echo packet contains the echoed payload or")
+	fmt.Println(" whether it contains feedback.")
+	fmt.Println("  - 0x00 = regular data.")
+	fmt.Println("  - 0xFF = feedback data.")
 	fmt.Println("")
-	fmt.Println("client  - send 4k packets with every fourth packet")
-	fmt.Println("          containing a PCF request (0x00, 0x00, [00])")
+	fmt.Println("client")
+	fmt.Println(" Send 4k packets with every fourth packet")
+	fmt.Println(" containing a PCF request (0x00, 0x00, [00])")
+    fmt.Println(" packets are sent as fast as possible")
 	fmt.Println("")
-	fmt.Println("forward - listen for packets and forward them on a different")
-    fmt.Println("          local relay address to the remote address while listening")
-	fmt.Println("          for packets from the remote address on the local relay adress")
-	fmt.Println("          and send those packets back to the original sender.")
+	fmt.Println("forward")
+	fmt.Println(" Listen for packets and forward them on a different")
+    fmt.Println(" local relay address to the remote address while listening")
+	fmt.Println("  for packets from the remote address on the local relay adress")
+	fmt.Println("  and send those packets back to the original sender.")
+	fmt.Println("")
+	fmt.Println("drop-rate")
+	fmt.Println(" Measure ratio of sent packets to received packets. ")
+	fmt.Println(" Also measures difference of sent PSN and received PSE.")
 }
 
 func main() {
@@ -99,6 +114,36 @@ func main() {
 		client(laddr, raddr)
 		return
 
+	case "drop-rate":
+		if len(args) < 7 {
+			showUsage()
+			return
+		}
+
+		laddr = args[2]
+		raddr = args[3]
+		numPackets, err := strconv.ParseInt(args[4], 10, 16)
+
+		if err != nil {
+			panic("Not a number!")
+		}
+
+		packetSize, err := strconv.ParseInt(args[5], 10, 16)
+
+		if err != nil {
+			panic("Not a number!")
+		}
+
+		sendDelay, err := strconv.ParseInt(args[6], 10, 16)
+
+		if err != nil {
+			panic("Not a number!")
+		}
+
+		dropRate(laddr, raddr, numPackets, packetSize, sendDelay)
+		return
+		
+
 	default:
 		panic("Invalid mode!")
 	}
@@ -118,6 +163,107 @@ func main() {
 	run(packetConn, udpAddr, lfaddr, mode)
 }
 
+func shuffle(data []byte) {
+	for i, v := range data {
+		if i > 0 {
+			data[i] = v ^ 0x3B
+			data[i-1] = data[i] ^ data[i-1] ^ byte(i)
+		}
+	}
+}
+
+func genData(size int64) []byte {
+	data := make([]byte, int(size))
+
+	for i:= int64(0); i < size; i++ {
+		data[i] = byte((i ^ 0x2D) % 256)
+	}
+
+	return data
+}
+
+func dropRate(laddr string, remoteAddr string, numPackets int64, packetSize int64, sendDelay int64) {
+	packetConn, err := net.ListenPacket("udp", laddr)
+
+	if err != nil {
+		panic("Could not create packet connection!")
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp4", remoteAddr)
+
+	if err != nil {
+		panic("Could not resolve address!")
+	}
+
+	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, 1989, udpAddr)
+
+	received := int64(0)
+	max := int64(0)
+	min := int64(4294967296)
+	sum := int64(0)
+
+	go func() {
+		for {
+			connection, inPacket, addr, _, err := connectionManager.ReadAndProcessPacket()
+			if err != nil {
+				panic("oops!")
+			}
+
+			psn := connection.PSN()
+			pse := inPacket.PSE()
+
+			diff := int64(psn) - int64(pse)
+
+			if diff > max {
+				max = diff
+			}
+
+			if diff < min {
+				min = diff
+			}
+
+			sum += diff
+
+			received++
+
+			fmt.Printf("--")
+			fmt.Println(plusPacketToString(inPacket, addr, packetConn.LocalAddr(), "client:in"))
+		}
+	}()
+
+	buffer := genData(packetSize)
+
+	for i := int64(0); i < numPackets; i++ {
+		shuffle(buffer)
+
+		if i % 4 == 0 {
+			connection.QueuePCFRequest(0x01, 0, []byte{0x00})
+		}
+
+		plusPacket, err := connection.PrepareNextPacket()
+		plusPacket.SetPayload(buffer)
+
+		if err != nil {
+			panic("oops!")
+		}
+
+		err = connectionManager.WritePacket(plusPacket, udpAddr)
+
+		if err != nil {
+			panic("oops!")
+		}
+
+		fmt.Printf("--")
+		fmt.Println(plusPacketToString(plusPacket, packetConn.LocalAddr(), udpAddr, "client:out"))
+
+		time.Sleep(time.Duration(sendDelay) * time.Millisecond)
+	}
+
+	time.Sleep(time.Duration(1000) * time.Millisecond)
+
+	fmt.Printf("{\"sent\":%d,\"received\":%d,\"max\":%d,\"min\":%d,\"avg\":%d}\n", numPackets, received, max, min, sum / received)
+}
+
 func client(laddr string, remoteAddr string) {
 	packetConn, err := net.ListenPacket("udp", laddr)
 
@@ -133,16 +279,12 @@ func client(laddr string, remoteAddr string) {
 
 	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, 1989, udpAddr)
 
-	received := 0
-
 	go func() {
 		for {
 			_, inPacket, addr, _, err := connectionManager.ReadAndProcessPacket()
 			if err != nil {
 				panic("oops!")
 			}
-
-			received++
 
 			fmt.Printf(plusPacketToString(inPacket, addr, packetConn.LocalAddr(), "client:in"))
 		}
