@@ -418,6 +418,8 @@ func client(laddr string, remoteAddr string) {
 		}
 
 		fmt.Println(plusPacketToString(plusPacket, packetConn.LocalAddr(), udpAddr, "client:out"))
+
+		time.Sleep(time.Duration(1) * time.Millisecond)
 	}
 }
 
