@@ -9,6 +9,8 @@ import "strconv"
 import "time"
 import "math/rand"
 
+var rndCat = uint64(rand.Uint32())<<32 | uint64(rand.Uint32())
+
 func showUsage() {
 	fmt.Println(".[SYNTAX].")
 	fmt.Println("")
@@ -233,7 +235,7 @@ func fuzz(laddr string, remoteAddr string, f int) {
 		panic("Could not resolve address!")
 	}
 
-	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, 1989, udpAddr)
+	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, rndCat, udpAddr)
 
 
 
@@ -302,7 +304,7 @@ func dropRate(laddr string, remoteAddr string, numPackets int64, packetSize int6
 		panic("Could not resolve address!")
 	}
 
-	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, 1989, udpAddr)
+	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, rndCat, udpAddr)
 
 	received := int64(0)
 	max := int64(0)
@@ -384,7 +386,7 @@ func client(laddr string, remoteAddr string) {
 		panic("Could not resolve address!")
 	}
 
-	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, 1989, udpAddr)
+	connectionManager, connection := PLUS.NewConnectionManagerClient(packetConn, rndCat, udpAddr)
 
 	go func() {
 		for {
