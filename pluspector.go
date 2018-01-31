@@ -2,8 +2,8 @@ package main
 
 import "os"
 import "net"
-import "plus"
-import "plus/packet"
+import "github.com/mami-project/plus-lib"
+import "github.com/mami-project/plus-lib/packet"
 import "fmt"
 import "strconv"
 import "time"
@@ -190,11 +190,12 @@ func main() {
 }
 
 func shuffle(data []byte) {
-	for i, v := range data {
-		if i > 0 {
-			data[i] = v ^ 0x3B
-			data[i-1] = data[i] ^ data[i-1] ^ byte(i)
-		}
+   sz := len(data)
+	for i, _ := range data {
+		j := rand.Int() % sz
+		t := data[i]
+		data[i] = data[j]
+		data[j] = t
 	}
 }
 
@@ -202,7 +203,7 @@ func genData(size int64) []byte {
 	data := make([]byte, int(size))
 
 	for i:= int64(0); i < size; i++ {
-		data[i] = byte((i ^ 0x2D) % 256)
+		data[i] = byte(rand.Int() % 256)
 	}
 
 	return data
@@ -533,7 +534,7 @@ func run(packetConn net.PacketConn, remoteAddr *net.UDPAddr, lfaddr string, mode
 	}
 
 	for {
-		plusPacket, addr, err := connManager.ReadPacket()
+		// plusPacket, addr, err := connManager.ReadPacket()
 
 		connection, plusPacket, addr, feedback, err := connManager.ReadAndProcessPacket()
 
